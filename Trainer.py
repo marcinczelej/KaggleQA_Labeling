@@ -50,16 +50,15 @@ class Trainer(object):
 
             """model = RoBERTaForQALabelingMultipleHeads.from_pretrained('roberta-base', num_labels=num_labels, output_hidden_states=True)"""
 
-            checkpoint_dir = './checkpoints/best_{}_fold_{}' .format(model.getName(), fold_nr)
+            checkpoint_dir = './checkpoints/{}_fold_{}' .format(model.getName(), fold_nr)
             checkpoint = tf.train.Checkpoint(model=model, optimizer=optimizer)
 
             train_loop(model=model, 
                        optimizer=optimizer, 
-                       loss=bce_loss, 
+                       loss_fn=bce_loss, 
                        metric="spearmanr", 
                        train_ds=train_ds, 
-                       test_ds=test_ds, 
-                       checkpoint=checkpoint, 
+                       test_ds=test_ds,  
                        checkpoint_dir=checkpoint_dir)
 
             """    
@@ -69,13 +68,14 @@ class Trainer(object):
                     2. predicting output values for stackexchange
                     3. saving predicted data into csv file 
             """
+            print("creating pseudo-labels...")
             pseudo_labeling_ds = tf.data.Dataset.from_tensor_slices((preprocessedPseudo)).batch(batch_size=batch_size, drop_remainder=True)
             
-            pseudo_labels_df = PseudoLabeler.create_pseudo_labels(checkpoint=checkpoint, 
-                                                               model=model, 
-                                                               checkpoint_dir=checkpoint_dir, 
-                                                               pseudo_labeling_df=pseudo_labeling_df, 
-                                                               fold_nr=fold_nr)
+            pseudo_labels_df = create_pseudo_labels(model=model, 
+                                                    checkpoint=checkpoint, 
+                                                    checkpoint_dir=checkpoint_dir, 
+                                                    pseudo_labeling_df=pseudo_labeling_ds, 
+                                                    fold_nr=fold_nr)
             pseudo_labels_df.to_csv(
                         os.path.join("./dataframes/pseudo_labeled_{}_fold-{}.csv" .format(model.getName(), fold_nr)), index=False)
             fold_nr += 1

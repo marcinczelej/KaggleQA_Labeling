@@ -1,4 +1,5 @@
 import os
+import keras
 
 import tensorflow as tf
 import pandas as pd
@@ -11,7 +12,7 @@ from parameters import *
 from utilities import accumulated_gradients
 from metric import *
 
-def train_loop(model, optimizer, loss_fn, metric, train_ds, test_ds, checkpoint, checkpoint_dir):
+def train_loop(model, optimizer, loss_fn, metric, train_ds, test_ds, checkpoint_dir):
     """
         Method that contains training loop for given epochs
         
@@ -99,9 +100,9 @@ def train_loop(model, optimizer, loss_fn, metric, train_ds, test_ds, checkpoint,
 
         if test_metric < last_loss:
             if hvd.rank() == 0:
-                checkpoint.save(os.path.join(checkpoint_dir, "best_{}_best_model" .format(model.getName())))
+                model.save(os.path.join(checkpoint_dir, "{}_best_model" .format(model.getName())), save_format='tf')
                 last_loss = test_metric
-                print("saving checkpoint for {}... " .format(model.getName()))
+                print("saving model for {}... " .format(model.getName()))
         
 def create_pseudo_labels(model, checkpoint, checkpoint_dir, pseudo_labeling_df, fold_nr):
     """
@@ -122,7 +123,7 @@ def create_pseudo_labels(model, checkpoint, checkpoint_dir, pseudo_labeling_df, 
             
         Pseudolables are saved into ./dataframes/pseudo_labeled_MODEL_NAME_fold-FOLD_NR.csv
     """
-    checkpoint.restore(checkpoint_dir).expect_partial()
+    model = keras.models.load_model(checkpoint_dir, "{}_best_model" .format(model.getName()))
     print("best checkpoint restored ...")
 
     pseudo_predictions = []
