@@ -1,5 +1,4 @@
 import os
-import keras
 
 import tensorflow as tf
 import pandas as pd
@@ -19,11 +18,10 @@ def train_loop(model, optimizer, loss_fn, metric, train_ds, test_ds, checkpoint_
         Parameters:
             model - model that should be trained
             optimizer - optimizer that will be used during training
-            loss - loss that sohuld be used during this training
+            loss_fn - loss function that sohuld be used during this training
             metric - metric that should be used to measure performance
             train_ds - dataset that should be used during training
             test_ds - test dataset that should be used for testing after each epoch training
-            checkpoint - checkpoint object that should be used for saving best model and optimizer
             checkpoint_dir - directory there to save checkpoint
     """
     trainable = model.trainable_variables
@@ -54,9 +52,8 @@ def train_loop(model, optimizer, loss_fn, metric, train_ds, test_ds, checkpoint_
 
         return loss, tf.math.sigmoid(y_pred)
 
-    last_loss = 999999
+    last_loss = -999999
 
-    print("starting training for {} epochs" .format(epochs))
     for epoch in range(epochs):
         gradients = None
         train_losses = []
@@ -98,20 +95,19 @@ def train_loop(model, optimizer, loss_fn, metric, train_ds, test_ds, checkpoint_
         print("epoch {} train loss {} test loss {} test metric {} train metric {}" \
               .format(epoch, np.mean(train_losses), np.mean(test_losses), test_metric, train_metric))
 
-        if test_metric < last_loss:
+        if test_metric > last_loss:
             if hvd.rank() == 0:
-                model.save(os.path.join(checkpoint_dir, "{}_best_model" .format(model.getName())), save_format='tf')
+                model.save_pretrained(checkpoint_dir)
                 last_loss = test_metric
-                print("saving model for {}... " .format(model.getName()))
+                print("model for {} saved under {}... " .format(model.getName(), checkpoint_dir))
         
-def create_pseudo_labels(model, checkpoint, checkpoint_dir, pseudo_labeling_df, fold_nr):
+def create_pseudo_labels_loop(model, pseudo_labeling_ds, pseudo_labeling_df, fold_nr):
     """
         Method responsible for pseudo labeling data
         
         Parameters:
-            checkpoint - checkopoint object used to load best saved model
             model - nn model that will be used for prediction
-            checkpoint_dir - directory of checkpoint to be loaded
+            pseudo_labeling_ds - dataset with inputs for prediction are stored (.csv file)
             pseudo_labeling_df - dataframe with preprocessed input to be pseudolabeled. Preprocessing should be done with preprocessing.dataPreprocessor class
             fold_nr - fold number
             
@@ -123,11 +119,9 @@ def create_pseudo_labels(model, checkpoint, checkpoint_dir, pseudo_labeling_df, 
             
         Pseudolables are saved into ./dataframes/pseudo_labeled_MODEL_NAME_fold-FOLD_NR.csv
     """
-    model = keras.models.load_model(checkpoint_dir, "{}_best_model" .format(model.getName()))
-    print("best checkpoint restored ...")
 
     pseudo_predictions = []
-    for _, inputs in enumerate(pseudo_labeling_df):
+    for _, inputs in enumerate(pseudo_labeling_ds):
         ids_mask, type_ids_mask, attention_mask = inputs[:, 0, :], inputs[:, 1, :], inputs[:, 2, :]
         predicted = model(ids_mask, 
                       attention_mask= attention_mask, 
@@ -138,8 +132,8 @@ def create_pseudo_labels(model, checkpoint, checkpoint_dir, pseudo_labeling_df, 
 
     print("predicting pseudo-labels done ...")
     pseudo_predictions = tf.math.sigmoid(pseudo_predictions)
-    predicted_df = stack_df.copy(deep=True)
-    for idx, col in enumerate(train_targets_df.columns):
-        predicted_df[col] = pseudo_predictions[:, idx].astype(np.float32)
+    predicted_df = pseudo_labeling_df.copy(deep=True)
+    for idx, col in enumerate(target_columns):
+        predicted_df[col] = pseudo_predictions[:, idx]
     
     return predicted_df

@@ -82,6 +82,9 @@ class RoBERTaForQALabelingMultipleHeads(TFRobertaPreTrainedModel):
         
         self.concat = tf.keras.layers.Concatenate(axis=-1)
         
+        self.hidden_states_weights = tf.Variable(initial_value=[-3.0]*hidden_layers_num + [0.0], dtype='float32', trainable=True, name="hidden_state_weights")
+        self.softmax_act = tf.keras.layers.Softmax(axis=0)
+        
         self.backbone.roberta.pooler._trainable=False
     
     def getName(self):
@@ -101,7 +104,7 @@ class RoBERTaForQALabelingMultipleHeads(TFRobertaPreTrainedModel):
         hidden_states = roberta_output[2]
         
         transformed_hidden_states = tf.stack([self.dropout(hidden_state[:, 0, :], training=kwargs.get("training", False)) for hidden_state in hidden_states], axis = 2)
-        transformed_hidden_states = self.weighted_sum(transformed_hidden_states)
+        transformed_hidden_states = tf.math.reduce_sum(self.softmax_act(self.hidden_states_weights)*transformed_hidden_states, axis=-1)
 
         # multisample dropout (wut): https://arxiv.org/abs/1905.09788
 
