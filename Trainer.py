@@ -7,12 +7,15 @@ import pandas as pd
 from sklearn.model_selection import KFold
 import horovod.tensorflow as hvd
 
+from preprocessing import dataPreprocessor
 from parameters import *
-from utilities import CustomSchedule
 from loops import *
 
 from BertModel import BertForQALabeling
 from RoBERTaModel import *
+
+import logging
+logging.basicConfig(level=logging.ERROR)
 
 models = {"RoBERTaForQALabeling": (RoBERTaForQALabeling, "roberta-base"),
           "RoBERTaForQALabelingMultipleHeads": (RoBERTaForQALabelingMultipleHeads, "roberta-base"),
@@ -20,36 +23,52 @@ models = {"RoBERTaForQALabeling": (RoBERTaForQALabeling, "roberta-base"),
 
 class Trainer(object):
     @classmethod
-    def train(cls, model_name, preprocessedInput, targets, preprocessedPseudo, weights_directory=None):
+    def train(cls, model_name, tokenizer, input_df, weights_directory=None):
+        """
+            Change to passing df not preprocessed input
+            Do preprocessing here
+        """
 
         kf = KFold(n_splits)
-        fold_nr =0
+        folded_data = pd.DataFrame(data=None, columns=input_df.columns)
+        
+        for fold_nr, (train_idx, test_idx) in enumerate(kf.split(input_df)):
+            print("Fold{}/{} " .format(fold_nr+1, n_splits))
+            
+            # get data from dataframe
+            train_df = pd.DataFrame(input_df.iloc[train_idx])
+            test_df = pd.DataFrame(input_df.iloc[test_idx])
+            
+            train_df["fold_nr"] = fold_nr
+            test_df["fold_nr"] = fold_nr
+            train_df["part"] = "train"
+            test_df["part"] = "test"
+            folded_data = pd.concat([folded_data, train_df, test_df], ignore_index=True)
 
-        for train_idx, test_idx in kf.split(preprocessedInput):
-            print("Fold{}/{} " .format(fold_nr, n_splits))
-            # train test indices
-            train_input = tf.gather(preprocessedInput, train_idx, axis=0)
-            train_target = tf.gather(targets, train_idx, axis=0)
-
-            test_input = tf.gather(preprocessedInput, test_idx, axis=0)
-            test_target = tf.gather(targets, test_idx, axis=0)
+            #preprocessing of train dataframe
+            q_title = train_df['question_title'].values
+            q_body = train_df['question_body'].values
+            answer = train_df['answer'].values
+            train_input = dataPreprocessor.preprocessBatch(q_body, q_title, answer, max_seq_lengths=(26,260,210,500))
+            train_target = train_df[target_columns].to_numpy()
+            
+            #preprocessing of test dataframe
+            q_title = test_df['question_title'].values
+            q_body = test_df['question_body'].values
+            answer = test_df['answer'].values
+            test_input = dataPreprocessor.preprocessBatch(q_body, q_title, answer, max_seq_lengths=(26,260,210,500))
+            test_target = test_df[target_columns].to_numpy()
 
             #train dataset
             train_ds = tf.data.Dataset.from_tensor_slices((train_input, train_target)). \
                                      shuffle(len(train_input)//4, reshuffle_each_iteration=True). \
-                                     batch(batch_size=batch_size, drop_remainder=True)
+                                     batch(batch_size=batch_size, drop_remainder=False)
 
             #test dataset
             test_ds = tf.data.Dataset.from_tensor_slices((test_input, test_target)). \
                                      shuffle(len(test_input)//4, reshuffle_each_iteration=True). \
-                                     batch(batch_size=batch_size, drop_remainder=True)
+                                     batch(batch_size=batch_size, drop_remainder=False)
 
-            lr_scheduler = CustomSchedule(warmup_steps=warmup_steps*2, 
-                                          num_steps=targets.shape[0]//batch_size, 
-                                          base_lr=lr*hvd.size())
-
-            #optimizer = tfa.optimizers.AdamW(learning_rate=lr_scheduler, weight_decay=decay)
-            optimizer = tf.optimizers.Adam(learning_rate = lr_scheduler)
             bce_loss = tf.keras.losses.BinaryCrossentropy(from_logits=True)
             
             if weights_directory == None:
@@ -65,16 +84,18 @@ class Trainer(object):
             Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
 
             train_loop(model=model,
-                       optimizer=optimizer, 
                        loss_fn=bce_loss, 
                        metric="spearmanr", 
                        train_ds=train_ds, 
                        test_ds=test_ds,  
-                       checkpoint_dir=checkpoint_dir)
-            fold_nr += 1
+                       checkpoint_dir=checkpoint_dir,
+                       elements=len(test_idx))
+        
+        Path(csv_save_dir).mkdir(parents=True, exist_ok=True)
+        folded_data.to_csv(os.path.join(csv_save_dir, "{}-kfold5.csv" .format(model.getName())))
             
     @classmethod
-    def pseudo_predict(cls, model_name, preprocessedPseudo, pseudo_df):
+    def pseudo_predict(cls, model_name, pseudo_df):
         
         for fold_nr in range(n_splits):
             print("Fold{}/{} " .format(fold_nr, n_splits))
@@ -93,12 +114,20 @@ class Trainer(object):
             print("best checkpoint for fold {} restored from {} ..." .format(fold_nr, checkpoint_dir))
             
             print("creating pseudo-labels...")
-            pseudo_labeling_ds = tf.data.Dataset.from_tensor_slices((preprocessedPseudo)).batch(batch_size=batch_size, drop_remainder=True)
+            
+            #preprocessing of train dataframe
+            q_title = pseudo_df['question_title'].values
+            q_body = pseudo_df['question_body'].values
+            answer = pseudo_df['answer'].values
+            pseudo_input = dataPreprocessor.preprocessBatch(q_body, q_title, answer, max_seq_lengths=(26,260,210,500))
+            
+            pseudo_labeling_ds = tf.data.Dataset.from_tensor_slices((pseudo_input)).batch(batch_size=batch_size, drop_remainder=False)
             
             pseudo_labels_df = create_pseudo_labels_loop(model=model,  
                                                          pseudo_labeling_ds=pseudo_labeling_ds,
                                                          pseudo_labeling_df=pseudo_df,
                                                          fold_nr=fold_nr)
+            pseudo_labels_df["fold_nr"] = fold_nr
             
             df_save_dir = os.path.join(csv_save_dir, model.getName())
             file_name = "pseudo_labeled_{}_fold-{}.csv" .format(model.getName(), fold_nr)

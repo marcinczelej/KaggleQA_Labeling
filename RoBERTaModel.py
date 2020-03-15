@@ -75,14 +75,12 @@ class RoBERTaForQALabelingMultipleHeads(TFRobertaPreTrainedModel):
         self.dropout = tf.keras.layers.Dropout(0.2)
         self.dropout_multisampled = tf.keras.layers.Dropout(0.5)
         
-        self.weighted_sum = WeightedSumLayer(config.num_hidden_layers)
-        
         self.classifiers = [tf.keras.layers.Dense(
             1, kernel_initializer=get_initializer(config.initializer_range), name="classifier") for _ in range(config.num_labels)]
         
         self.concat = tf.keras.layers.Concatenate(axis=-1)
         
-        self.hidden_states_weights = tf.Variable(initial_value=[-3.0]*hidden_layers_num + [0.0], dtype='float32', trainable=True, name="hidden_state_weights")
+        self.hidden_states_weights = tf.Variable(initial_value=[-3.0]*config.num_hidden_layers + [0.0], dtype='float32', trainable=True, name="hidden_state_weights")
         self.softmax_act = tf.keras.layers.Softmax(axis=0)
         
         self.backbone.roberta.pooler._trainable=False
@@ -90,7 +88,7 @@ class RoBERTaForQALabelingMultipleHeads(TFRobertaPreTrainedModel):
     def getName(self):
         return 'RoBERTaForQALabelingMultipleHeads'
     
-    
+    @tf.function
     def call(self, input_ids,
               attention_mask=None,
               token_type_ids=None, 
@@ -110,7 +108,7 @@ class RoBERTaForQALabelingMultipleHeads(TFRobertaPreTrainedModel):
 
         output_logits = None
         for i in range(self.num_layers):
-            multisampled_logits = [self.classifiers[i](self.dropout_multisampled(transformed_hidden_states, training=kwargs.get("training", False))) for _ in range(5)]
+            multisampled_logits = [self.classifiers[0](self.dropout_multisampled(transformed_hidden_states, training=kwargs.get("training", False))) for _ in range(5)]
             stacked_logits = tf.stack(multisampled_logits, axis=0)
 
             single_output_logit = tf.math.reduce_mean(stacked_logits, axis=0)

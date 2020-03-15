@@ -1,4 +1,5 @@
 import os
+import time
 
 import tensorflow as tf
 import pandas as pd
@@ -7,17 +8,19 @@ import numpy as np
 from sklearn.model_selection import KFold
 import horovod.tensorflow as hvd
 
+from datetime import timedelta
+
 from parameters import *
 from utilities import accumulated_gradients
 from metric import *
+from utilities import CustomSchedule
 
-def train_loop(model, optimizer, loss_fn, metric, train_ds, test_ds, checkpoint_dir):
+def train_loop(model, loss_fn, metric, train_ds, test_ds, checkpoint_dir, elements):
     """
         Method that contains training loop for given epochs
         
         Parameters:
             model - model that should be trained
-            optimizer - optimizer that will be used during training
             loss_fn - loss function that sohuld be used during this training
             metric - metric that should be used to measure performance
             train_ds - dataset that should be used during training
@@ -25,7 +28,7 @@ def train_loop(model, optimizer, loss_fn, metric, train_ds, test_ds, checkpoint_
             checkpoint_dir - directory there to save checkpoint
     """
     trainable = model.trainable_variables
-    
+
     @tf.function
     def train_step(inputs, y_true, first_batch):
         with tf.GradientTape() as tape:
@@ -34,8 +37,8 @@ def train_loop(model, optimizer, loss_fn, metric, train_ds, test_ds, checkpoint_
                            attention_mask= attention_mask, 
                            token_type_ids=type_ids_mask, 
                            training=True)
-            loss = tf.reduce_sum(loss_fn(y_true, y_pred)*(1. / batch_size))
-
+            loss = loss_fn(y_true, y_pred)
+        
         tape = hvd.DistributedGradientTape(tape)
         grads = tape.gradient(loss, trainable)
 
@@ -48,24 +51,34 @@ def train_loop(model, optimizer, loss_fn, metric, train_ds, test_ds, checkpoint_
                        attention_mask= attention_mask, 
                        token_type_ids=type_ids_mask, 
                        training=False)
-        loss = tf.reduce_sum(loss_fn(y_true, y_pred)*(1. / batch_size))
 
+        loss = loss_fn(y_true, y_pred)
         return loss, tf.math.sigmoid(y_pred)
 
     last_loss = -999999
+    
+    lr_scheduler = CustomSchedule(warmup_steps=warmup_steps, 
+                                          num_steps=epochs * (elements//batch_size) // gradient_accumulate_steps, 
+                                          base_lr=lr*hvd.size())
 
+        #optimizer = tfa.optimizers.AdamW(learning_rate=lr_scheduler, weight_decay=decay)
+    optimizer = tf.optimizers.Adam(learning_rate = lr_scheduler)
+    
     for epoch in range(epochs):
+        start = time.time()
         gradients = None
-        train_losses = []
-        test_losses = []
+        train_losses = 0.0
+        test_losses = 0.0
         train_preds = []
         test_preds = []
         train_targets = []
         test_targets = []
+        
+        
         global_batch = 0
         for batch_nr, (inputs, y_true) in enumerate(train_ds):
             loss, current_gradient, y_pred = train_step(inputs, y_true, batch_nr==0)
-            train_losses.append(np.mean(loss))
+            train_losses += loss/((elements//batch_size) * gradient_accumulate_steps)
             train_preds.append(y_pred)
             train_targets.append(y_true)
             gradients = accumulated_gradients(gradients, current_gradient, gradient_accumulate_steps)
@@ -85,15 +98,17 @@ def train_loop(model, optimizer, loss_fn, metric, train_ds, test_ds, checkpoint_
 
         for _, (inputs, y_true) in enumerate(test_ds):
             loss, y_pred = test_step(inputs, y_true)
-            test_losses.append(np.mean(loss))
+            test_losses += loss/((elements//batch_size) * gradient_accumulate_steps)
             test_preds.append(y_pred)
             test_targets.append(y_true)
 
         test_metric = metrics[metric](test_targets, test_preds)
         train_metric = metrics[metric](train_targets, train_preds)
-
-        print("epoch {} train loss {} test loss {} test metric {} train metric {}" \
-              .format(epoch, np.mean(train_losses), np.mean(test_losses), test_metric, train_metric))
+        
+        elapsed = (time.time() - start)
+        if hvd.rank() == 0:
+            print("epoch {}/{} train loss {} test loss {} test metric {} train metric {} epoch time {}" \
+                  .format(epoch+1, epochs, np.mean(train_losses), np.mean(test_losses), test_metric, train_metric, str(timedelta(seconds=elapsed))))
 
         if test_metric > last_loss:
             if hvd.rank() == 0:
