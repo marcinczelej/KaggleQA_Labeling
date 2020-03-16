@@ -28,6 +28,9 @@ class Trainer(object):
             Change to passing df not preprocessed input
             Do preprocessing here
         """
+        
+        # prepare tokenizer vocabulary without any special tags
+        dataPreprocessor.preprocess_vocab()
 
         kf = KFold(n_splits)
         folded_data = pd.DataFrame(data=None, columns=input_df.columns)
@@ -46,6 +49,7 @@ class Trainer(object):
             folded_data = pd.concat([folded_data, train_df, test_df], ignore_index=True)
 
             #preprocessing of train dataframe
+            print("Preprocessing train data")
             q_title = train_df['question_title'].values
             q_body = train_df['question_body'].values
             answer = train_df['answer'].values
@@ -53,6 +57,7 @@ class Trainer(object):
             train_target = train_df[target_columns].to_numpy()
             
             #preprocessing of test dataframe
+            print("Preprocessing test data")
             q_title = test_df['question_title'].values
             q_body = test_df['question_body'].values
             answer = test_df['answer'].values

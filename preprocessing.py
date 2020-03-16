@@ -1,5 +1,8 @@
+import copy
+
 from math import ceil, floor
 
+import numpy as np
 import tensorflow as tf
 
 class dataPreprocessor(object):
@@ -9,6 +12,8 @@ class dataPreprocessor(object):
     logger = False
     tokenizer = None
     model = None
+    masking_prob = 0.15
+    preprocessed_vocab = None
     
     @classmethod
     def combine_data(cls, q_body, q_title, answer, max_seq_length):
@@ -73,7 +78,7 @@ class dataPreprocessor(object):
                                              answer=answer,
                                              max_seq_length=max_seq_length)
             
-
+            ids_mask = cls.mask_tokens(ids_mask)
             return (ids_mask, type_ids_mask, attention_mask)
             
         # if question title is shorter than max length:
@@ -129,6 +134,7 @@ class dataPreprocessor(object):
                                          answer=answer, 
                                          max_seq_length=max_seq_length)
         
+        ids_mask = cls.mask_tokens(ids_mask)
         return (ids_mask, type_ids_mask, attention_mask)
     
     @classmethod
@@ -144,3 +150,62 @@ class dataPreprocessor(object):
             else:
                 preprocessed_batch = tf.concat([preprocessed_batch, preprocessed_element], axis=0)
         return preprocessed_batch
+    
+    @classmethod
+    def preprocess_vocab(cls):
+        cls.preprocessed_vocab = []
+        
+        tokenizer_vocab_cleaned = cls.tokenizer.get_vocab().keys() - cls.tokenizer.special_tokens_map.values()
+
+        for key in tokenizer_vocab_cleaned:
+            if key != cls.tokenizer.cls_token and key != cls.tokenizer.sep_token and key != cls.tokenizer.pad_token:
+                cls.preprocessed_vocab.append(key)
+    
+    @classmethod
+    def mask_tokens(cls, inputs):        
+
+        assert(cls.preprocessed_vocab != None)
+        
+        feasible_indexes = []
+
+        # not masking special tokens
+        for idx, token in enumerate(inputs):
+            if token != cls.tokenizer.cls_token_id and token != cls.tokenizer.sep_token_id and token != cls.tokenizer.pad_token_id:
+                feasible_indexes.append(idx)
+
+        
+        masked_input = copy.copy(inputs)
+        
+        #shuffle randmly and get 15% of data
+        np.random.shuffle(feasible_indexes)
+        desired_change_count = max(1, int(len(feasible_indexes)*0.15))
+
+        changed_amount = 0
+        
+        indices_masked = []
+
+        for idx in feasible_indexes:
+            indices_masked.append(idx)
+            # if we changed desired amount of tokens break
+            if changed_amount == desired_change_count:
+                break
+
+            # 80% to mask token
+            if np.random.random() < 0.8:
+                masked_input = tf.concat([masked_input[:idx], [cls.tokenizer.mask_token_id], masked_input[idx+1:]], axis=-1)
+                changed_amount += 1
+                continue
+
+            # 10% to change it with random word from vocabulary
+            # because ther eare only 20% left we have two options:
+            # random word
+            # leave it a it was
+            if np.random.random() < 0.5:
+                masked_input = tf.concat([masked_input[:idx], [np.random.randint(0, len(cls.preprocessed_vocab))], masked_input[idx+1:]], axis=-1)
+                changed_amount += 1
+                continue
+            # else 10% chance to leave it as it was
+            else:
+                changed_amount+= 1
+
+        return masked_input.numpy()
