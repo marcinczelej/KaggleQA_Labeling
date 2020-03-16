@@ -1,3 +1,5 @@
 horovodrun -np 4 --timeline-filename ./timeline.json --autotune python QA_labeling.py   <- horovod with timeline analysis
 
-Roberta not working
+average epoch time : 9 minutes
+
+Roberta with multiple heads cannot be serialized

@@ -54,3 +54,6 @@ Trainer.train(model_name=model_name,
 
 Trainer.pseudo_predict(model_name=model_name, 
                        pseudo_df=stack_df)
+
+hvd.shutdown()
+

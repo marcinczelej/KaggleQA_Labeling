@@ -89,7 +89,8 @@ class Trainer(object):
                        train_ds=train_ds, 
                        test_ds=test_ds,  
                        checkpoint_dir=checkpoint_dir,
-                       elements=len(test_idx))
+                       train_elements = len(train_idx),
+                       test_elements=len(test_idx))
         
         Path(csv_save_dir).mkdir(parents=True, exist_ok=True)
         folded_data.to_csv(os.path.join(csv_save_dir, "{}-kfold5.csv" .format(model.getName())))
