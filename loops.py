@@ -10,6 +10,7 @@ import horovod.tensorflow as hvd
 
 from datetime import timedelta
 
+from preprocessing import dataPreprocessor
 from parameters import *
 from utilities import accumulated_gradients
 from metric import *
@@ -89,8 +90,14 @@ def train_loop(model, loss_fn, metric, train_ds, test_ds, checkpoint_dir, train_
         train_targets = []
         test_targets = []
         global_batch = 0
-        for batch_nr, (inputs, y_true) in enumerate(train_ds):
-            loss, current_gradient, y_pred = train_step(inputs, y_true, batch_nr==0)
+        for batch_nr, (inputs) in enumerate(train_ds):
+            q_title = inputs['question_title'].values
+            q_body = inputs['question_body'].values
+            answer = inputs['answer'].values
+            y_true = inputs[target_columns].to_numpy()
+            train_input = dataPreprocessor.preprocessBatch(q_body, q_title, answer, max_seq_lengths=(26,260,210,500))
+            
+            loss, current_gradient, y_pred = train_step(train_input, y_true, batch_nr==0)
             train_losses += loss/((train_elements//batch_size) * gradient_accumulate_steps)
             train_preds.append(y_pred)
             train_targets.append(y_true)
@@ -125,7 +132,13 @@ def train_loop(model, loss_fn, metric, train_ds, test_ds, checkpoint_dir, train_
                 print('Step {} loss {}'  .format(batch_nr, loss, ))"""
 
         for _, (inputs, y_true) in enumerate(test_ds):
-            loss, y_pred = test_step(inputs, y_true)
+            q_title = inputs['question_title'].values
+            q_body = inputs['question_body'].values
+            answer = inputs['answer'].values
+            y_true = inputs[target_columns].to_numpy()
+            test_input = dataPreprocessor.preprocessBatch(q_body, q_title, answer, max_seq_lengths=(26,260,210,500))
+            
+            loss, y_pred = test_step(test_input, y_true)
             test_losses += loss/((test_elements//batch_size) * gradient_accumulate_steps)
             test_preds.append(y_pred)
             test_targets.append(y_true)

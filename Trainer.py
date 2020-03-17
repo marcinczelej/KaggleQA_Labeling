@@ -7,7 +7,6 @@ import pandas as pd
 from sklearn.model_selection import KFold
 import horovod.tensorflow as hvd
 
-from preprocessing import dataPreprocessor
 from parameters import *
 from loops import *
 
@@ -48,31 +47,11 @@ class Trainer(object):
             test_df["part"] = "test"
             folded_data = pd.concat([folded_data, train_df, test_df], ignore_index=True)
 
-            #preprocessing of train dataframe
-            print("Preprocessing train data")
-            q_title = train_df['question_title'].values
-            q_body = train_df['question_body'].values
-            answer = train_df['answer'].values
-            train_input = dataPreprocessor.preprocessBatch(q_body, q_title, answer, max_seq_lengths=(26,260,210,500))
-            train_target = train_df[target_columns].to_numpy()
+            train_ds = tf.data.Dataset.from_tensor_slices(dict(train_df)).shuffle(len(train_idx)//4, reshuffle_each_iteration=True). \
+                                                            batch(batch_size=batch_size, drop_remainder=False)
             
-            #preprocessing of test dataframe
-            print("Preprocessing test data")
-            q_title = test_df['question_title'].values
-            q_body = test_df['question_body'].values
-            answer = test_df['answer'].values
-            test_input = dataPreprocessor.preprocessBatch(q_body, q_title, answer, max_seq_lengths=(26,260,210,500))
-            test_target = test_df[target_columns].to_numpy()
-
-            #train dataset
-            train_ds = tf.data.Dataset.from_tensor_slices((train_input, train_target)). \
-                                     shuffle(len(train_input)//4, reshuffle_each_iteration=True). \
-                                     batch(batch_size=batch_size, drop_remainder=False)
-
-            #test dataset
-            test_ds = tf.data.Dataset.from_tensor_slices((test_input, test_target)). \
-                                     shuffle(len(test_input)//4, reshuffle_each_iteration=True). \
-                                     batch(batch_size=batch_size, drop_remainder=False)
+            test_ds = tf.data.Dataset.from_tensor_slices(dict(test_df)).shuffle(len(test_idx)//4, reshuffle_each_iteration=True). \
+                                                            batch(batch_size=batch_size, drop_remainder=False)
 
             bce_loss = tf.keras.losses.BinaryCrossentropy(from_logits=True)
             
