@@ -171,7 +171,7 @@ def train_loop(model, loss_fn, metric, train_ds, test_ds, checkpoint_dir, train_
         elapsed = (time.time() - start)
         if hvd.rank() == 0:
             print("\nFold {} epoch {}/{} train loss {} test loss {} test metric {} train metric {} epoch time {}" \
-                  .format(fold_nr, 
+                  .format(fold_nr+1, 
                           epoch+1, 
                           Params.epochs, 
                           train_losses, 
@@ -189,8 +189,9 @@ def train_loop(model, loss_fn, metric, train_ds, test_ds, checkpoint_dir, train_
                 last_loss = test_metric
                 print("    model saved under {}... " .format(checkpoint_dir))
 
-        train_checkpoint.current_epoch.assign(epoch)
-        ckpt_manager.save()
+        if hvd.rank()==0:
+            train_checkpoint.current_epoch.assign(epoch)
+            ckpt_manager.save()
         
 def create_pseudo_labels_loop(model, pseudo_labeling_ds, pseudo_labeling_df, fold_nr):
     """

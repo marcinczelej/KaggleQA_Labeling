@@ -120,7 +120,6 @@ class Trainer(object):
             model = models[model_name][0].from_pretrained(weights, 
                                                           num_labels=Params.num_labels, 
                                                           output_hidden_states=True)
-            print("QQQQQQQQQQQQQQQ start training")
             train_loop(model=model,
                        loss_fn=bce_loss, 
                        metric="spearmanr", 
